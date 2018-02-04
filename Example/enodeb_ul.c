@@ -94,7 +94,7 @@ int DecodeDataChannel(srslte_enb_ul_t* uplinkConfig)
 	return res;
 }
 
-void CalculateEVM(cf_t* signal, const unsigned int signalLen, cf_t** out_d, short** out_q)
+void CalculateEVM(cf_t* signal, const unsigned int signalLen, unsigned int* resultSize, cf_t** distances, cf_t** CEs, short** LLRs)
 {
 	srslte_cell_t cell;
 	srslte_enb_ul_t uplinkConfig;
@@ -111,22 +111,28 @@ void CalculateEVM(cf_t* signal, const unsigned int signalLen, cf_t** out_d, shor
 		return;
 	}
 
-	*out_q = srslte_vec_malloc(sizeof(int16_t) * uplinkConfig.pusch.max_re * srslte_mod_bits_x_symbol(SRSLTE_MOD_64QAM));
-	if (!out_q) {
+	*resultSize = uplinkConfig.pusch.max_re;
+	*LLRs = srslte_vec_malloc(sizeof(int16_t) * *resultSize * srslte_mod_bits_x_symbol(SRSLTE_MOD_QPSK));
+	if (!LLRs) {
 		printf("Failed to allocate q\n");
 		return;
 	}
-	printf("Allocated %d for q\n", sizeof(int16_t) * uplinkConfig.pusch.max_re * srslte_mod_bits_x_symbol(SRSLTE_MOD_64QAM));
 
-	*out_d = srslte_vec_malloc(sizeof(cf_t) * uplinkConfig.pusch.max_re);
-	if (!out_d) {
+	*distances = srslte_vec_malloc(sizeof(cf_t) * *resultSize);
+	if (!distances) {
 		printf("Failed to allocate d\n");
 		return;
 	}
-	printf("Allocated %d for d\n", sizeof(cf_t) * uplinkConfig.pusch.max_re);
 
-	uplinkConfig.pusch.q = *out_q;
-	uplinkConfig.pusch.d = *out_d;
+	*CEs = srslte_vec_malloc(sizeof(cf_t) * *resultSize);
+	if (!CEs) {
+		printf("Failed to allocate d\n");
+		return;
+	}
+
+	uplinkConfig.pusch.q = *LLRs;
+	uplinkConfig.pusch.d = *distances;
+	uplinkConfig.pusch.ce = *CEs;
 
 	srslte_pucch_set_threshold(&uplinkConfig.pucch, 1, 0);
 
@@ -136,14 +142,12 @@ void CalculateEVM(cf_t* signal, const unsigned int signalLen, cf_t** out_d, shor
 	srslte_enb_ul_fft(&uplinkConfig, signal);
 
 	DecodeDataChannel(&uplinkConfig);	
-
 }
 
 
-int readSignal(cf_t* sig, unsigned int maxSymbolsNum)
+int readSignal(cf_t* sig, unsigned int maxSymbolsNum, const char *filename)
 {
-	// FILE* file = fopen("d:\\Rimon.Orni\\Vayyar\\srsLTE_1.4\\lte_fdd_80ms_40M.bin", "rb");
-	FILE* file = fopen("C:\\Users\\rimon.orni\\Dropbox (Vayyar)\\Magic box\\Mars\\Board Test\\PUSCH Demod\\lte_fdd_UL_10ms_11p52MHz.bin", "rb");
+	FILE* file = fopen(filename, "rb");
 	int readBytes;
 
 	readBytes = fread(sig, sizeof(cf_t), maxSymbolsNum, file);
@@ -155,23 +159,50 @@ int readSignal(cf_t* sig, unsigned int maxSymbolsNum)
 
 int main(int argc, char** argv)
 {
-	//const int maxSigLen = 16762500;
+	char *filename = "C:\\Users\\rimon.orni\\Dropbox (Vayyar)\\Magic box\\Mars\\Board Test\\PUSCH Demod\\lte_fdd_UL_10ms_11p52MHz.bin";
+	if (argc > 1)
+	{
+		filename = argv[1];
+	}
 	const int maxSigLen = 115200;
 	cf_t *pBuff = (cf_t*)malloc(maxSigLen * sizeof(cf_t));
-	readSignal(pBuff, maxSigLen);
-	
-	cf_t* d; 
-	short* q;
+	readSignal(pBuff, maxSigLen, filename);
 
-	CalculateEVM(pBuff, maxSigLen, &d, &q);
+	cf_t* distances;
+	cf_t* CEs;
+	short* LLRs;
+	unsigned int resultSize;
 
+	CalculateEVM(pBuff, maxSigLen, &resultSize, &distances, &CEs, &LLRs);
+
+	printf("ResultSize: %d\n", resultSize);
 	for (int i = 0; i < 50; i++)
 	{
-		printf("q[%d] = %d\n", i, q[i]);
+		printf("LLRs[%d] = %d\n", i, LLRs[i]);
 	}
 	printf("\n\n");
 	for (int i = 0; i < 50; i++)
 	{
-		printf("d[%d] = %f + %f I\n", i, __real__ d[i], __imag__ d[i]);
+		printf("distances[%d] = %f + %f I\n", i, __real__ distances[i], __imag__ distances[i]);
+	}
+	printf("\n\n");
+	for (int i = 0; i < resultSize - 3; i += 600)
+	{
+		printf("CEs[%d] = %f + %f I\n", i, __real__ CEs[i], __imag__ CEs[i]);
+		printf("CEs[%d] = %f + %f I\n", i + 1, __real__ CEs[i + 1], __imag__ CEs[i + 1]);
+		printf("CEs[%d] = %f + %f I\n", i + 2, __real__ CEs[i + 2], __imag__ CEs[i + 2]);
+		printf("\n");
+	}
+
+	char *distFilename = "C:\\temp\\LTE_Distances.txt";
+	char *ceFilename = "C:\\temp\\LTE_CEs.txt";
+	FILE* distFile = fopen(distFilename, "w");
+	FILE* ceFile = fopen(ceFilename, "w");
+
+	for (int i = 0; i < resultSize; i++)
+	{
+		fprintf(distFile, "%f + %f I\n", __real__ distances[i], __imag__ distances[i]);
+		fprintf(ceFile, "%f + %f I\n", __real__ CEs[i], __imag__ CEs[i]);
 	}
 }
+
